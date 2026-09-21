@@ -1,0 +1,13 @@
+   __pycache__/
+   *.pyc
+   .venv/
+   .env
+   .pytest_cache/
+
+   # test and hand-written sample data: keep out of the public repo
+   corpus/bts-test.md
+   corpus/countries.md
+   corpus/docs/eval-guide.md
+   corpus/docs/training-guide.md
+   corpus/experiments/exp-042-lr-sweep.md
+   corpus/experiments/exp-051-augmentation.md

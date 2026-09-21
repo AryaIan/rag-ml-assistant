@@ -1,0 +1,116 @@
+"""Markdown-aware chunking.
+
+Splits on headings first so each chunk carries its heading path (used for
+citations), then packs paragraphs up to a word budget. Fenced code blocks and
+tables are kept whole where possible, since splitting a results table or a
+config snippet in half makes it useless for retrieval.
+"""
+import re
+from dataclasses import dataclass
+
+from .config import CHUNK_OVERLAP_WORDS, CHUNK_WORDS
+
+HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+
+
+@dataclass
+class Chunk:
+    section: str
+    content: str
+
+
+def _blocks(lines: list[str]) -> list[str]:
+    """Group lines into paragraph-level blocks; a fenced code block is one block."""
+    blocks, cur, in_fence = [], [], False
+    for line in lines:
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            cur.append(line)
+            continue
+        if not in_fence and not line.strip():
+            if cur:
+                blocks.append("\n".join(cur))
+                cur = []
+            continue
+        cur.append(line)
+    if cur:
+        blocks.append("\n".join(cur))
+    return blocks
+
+
+def _split_oversized(block: str) -> list[str]:
+    """Split a block bigger than the word budget at line boundaries (then, for a single
+    huge line, at word boundaries). Fenced code blocks are left whole on purpose."""
+    if len(block.split()) <= CHUNK_WORDS or block.lstrip().startswith("```"):
+        return [block]
+    pieces, cur, cur_words = [], [], 0
+
+    def flush():
+        nonlocal cur, cur_words
+        if cur:
+            pieces.append("\n".join(cur))
+            cur, cur_words = [], 0
+
+    for line in block.split("\n"):
+        words = line.split()
+        if len(words) > CHUNK_WORDS:            # one enormous line: cut it by words
+            flush()
+            for i in range(0, len(words), CHUNK_WORDS):
+                pieces.append(" ".join(words[i:i + CHUNK_WORDS]))
+            continue
+        if cur and cur_words + len(words) > CHUNK_WORDS:
+            flush()
+        cur.append(line)
+        cur_words += len(words)
+    flush()
+    return pieces
+
+
+def _pack(blocks: list[str]) -> list[str]:
+    blocks = [piece for b in blocks for piece in _split_oversized(b)]
+    out, cur, cur_words = [], [], 0
+    for b in blocks:
+        w = len(b.split())
+        if cur and cur_words + w > CHUNK_WORDS:
+            out.append("\n\n".join(cur))
+            # carry a small tail forward for context overlap
+            tail = " ".join("\n\n".join(cur).split()[-CHUNK_OVERLAP_WORDS:])
+            cur, cur_words = [tail], len(tail.split())
+        cur.append(b)
+        cur_words += w
+    if cur and any(x.strip() for x in cur):
+        out.append("\n\n".join(cur))
+    return out
+
+
+def chunk_markdown(text: str) -> tuple[str, list[Chunk]]:
+    """Returns (title, chunks)."""
+    title, path, sections = "", [], []  # sections: (heading_path, lines)
+    cur_lines: list[str] = []
+    in_fence = False
+
+    def flush():
+        if any(l.strip() for l in cur_lines):
+            sections.append((" > ".join(path) or "(intro)", list(cur_lines)))
+
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+        m = None if in_fence else HEADING.match(line)
+        if m:
+            flush()
+            cur_lines.clear()
+            level, name = len(m.group(1)), m.group(2).strip()
+            path[:] = path[: level - 1] + [name]
+            if not title:
+                title = name
+        else:
+            cur_lines.append(line)
+    flush()
+
+    chunks = [
+        Chunk(section=sec, content=piece)
+        for sec, lines in sections
+        for piece in _pack(_blocks(lines))
+    ]
+    return title or "Untitled", chunks
