@@ -6,12 +6,15 @@ search (vector + full-text, fused with RRF), and answers with numbered citations
 ## Run
 
 ```bash
+.
 docker compose up -d
 pip install -r requirements.txt
 export ANTHROPIC_API_KEY=sk-...        # only needed for /ask
 
 python -m app.ingest ./corpus          # re-run any time; unchanged files are skipped
 uvicorn app.main:app --reload
+The included corpus covers four experiments: logistic regression regularization,
+random forest size, model comparison, and feature scaling
 ```
 
 First ingest downloads the embedding model (~130 MB, cached afterwards).
